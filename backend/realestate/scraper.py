@@ -7,19 +7,23 @@ Two layers, deliberately separated because they have very different stability:
     per-run page cap, and the page-33 / ~990-result cap guard from the charter.
     This part is correct regardless of how the site renders listings.
 
-  * Parse layer (UNCONFIRMED — Task 0): turning a results page into BRONZE rows.
-    The site is a Next.js app; listings live in JSON-LD <script> blocks and/or the
-    `__next_f` RSC payload, whose exact field names aren't verified yet. So parsing
-    is isolated in `_extract_listings_from_html` + `_parse_jsonld_listing`, and
-    `recon()` dumps the real payload structure so the parser can be fixed against
-    live data without touching the fetch layer.
+  * Parse layer (confirmed Task 0): turning a results page into BRONZE rows. The
+    site is a Next.js app with NO server-rendered cards and NO ld+json <script>
+    blocks; listings are schema.org objects embedded in the streamed `__next_f` RSC
+    payload, each keyed under `"item": {...}` with a /detail/<id>/ url. Parsing is
+    isolated in `_reconstruct_stream` → `_extract_listings_from_html` → `_parse_item`;
+    `recon()` dumps the real payload so it can be re-fixed if the site changes.
+
+Geo (city/district/region) is derived from the sweep's slug (the results payload
+doesn't carry the listing locality) via schemas.locality_geo — each sweep targets
+exactly one locality. Captures structured FACTS only; description prose is never
+read (agency copyright).
 
 Config (env, with timeout-safe defaults — see SCRAPE_* below). NOTE: host.json caps
 a function execution at 5 min; the charter's 20–40 s inter-page delay only fits if
 you raise functionTimeout. Defaults here (4–9 s) keep a ~33-page sweep inside 5 min.
 
-ALL timestamps are UTC (see schemas.py). Description prose is never stored (copyright);
-only the parsed `street` token is kept.
+ALL timestamps are UTC (see schemas.py).
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ from urllib.robotparser import RobotFileParser
 import polars as pl
 import requests
 
-from realestate.schemas import BRONZE_SCHEMA, DEALS, LOCALITY_SLUGS, TYPE
+from realestate.schemas import BRONZE_SCHEMA, DEALS, LOCALITY_SLUGS, TYPE, locality_geo
 
 # ---------------------------------------------------------------------------
 # Config
@@ -140,16 +144,15 @@ _JSONLD_RE = re.compile(
     r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
     re.DOTALL | re.IGNORECASE,
 )
-_NEXT_F_RE = re.compile(r'self\.__next_f\.push\(\[\d+,\s*(".*?")\]\)', re.DOTALL)
-
-_LISTING_TYPES = {
-    "product", "offer", "realestatelisting", "residence", "apartment",
-    "singlefamilyresidence", "house", "accommodation",
-}
+# One push() call: self.__next_f.push([<n>,"<JS-string payload>"]). The capture group
+# is the JSON string literal (incl. its quotes), so json.loads decodes the escaping.
+_NEXT_F_RE = re.compile(r'self\.__next_f\.push\(\[\d+,("(?:[^"\\]|\\.)*")\]\)')
+_DETAIL_ID_RE = re.compile(r"/detail/([^/]+)/")
 
 
 def _extract_jsonld_blocks(html: str) -> list:
-    """Parse every <script type="application/ld+json"> block. Returns parsed objects."""
+    """Parse every <script type="application/ld+json"> block. Returns parsed objects.
+    (nehnutelnosti.sk renders none on results pages — kept for recon completeness.)"""
     blocks = []
     for raw in _JSONLD_RE.findall(html):
         try:
@@ -159,18 +162,31 @@ def _extract_jsonld_blocks(html: str) -> list:
     return blocks
 
 
-def _walk_listing_nodes(node):
-    """Yield dict nodes that look like a real-estate listing/offer (by @type)."""
-    if isinstance(node, dict):
-        t = node.get("@type")
-        types = {t.lower()} if isinstance(t, str) else {x.lower() for x in t} if isinstance(t, list) else set()
-        if types & _LISTING_TYPES:
-            yield node
-        for v in node.values():
-            yield from _walk_listing_nodes(v)
-    elif isinstance(node, list):
-        for v in node:
-            yield from _walk_listing_nodes(v)
+def _reconstruct_stream(html: str) -> str:
+    """Reconstruct the Next.js RSC stream by decoding every __next_f push() string."""
+    parts = []
+    for m in _NEXT_F_RE.finditer(html):
+        try:
+            decoded = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(decoded, str):
+            parts.append(decoded)
+    return "".join(parts)
+
+
+def _balanced_object(s: str, start: int) -> str | None:
+    """Substring of the brace-balanced JSON object starting at `start` (a '{'), or None."""
+    depth = 0
+    for j in range(start, len(s)):
+        c = s[j]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start:j + 1]
+    return None
 
 
 _DIGIT_RE = re.compile(r"(\d+)")
@@ -211,55 +227,6 @@ def _num(value) -> float | None:
         return None
 
 
-def _parse_jsonld_listing(node: dict, slug: str, deal: str) -> dict | None:
-    """Map one JSON-LD listing node to a (partial) bronze row.
-
-    UNCONFIRMED key names — fix here once recon() shows the real payload.
-    Returns None if no stable id can be found.
-    """
-    offers = node.get("offers") or {}
-    if isinstance(offers, list):
-        offers = offers[0] if offers else {}
-
-    detail_url = node.get("url") or offers.get("url")
-    detail_id = (
-        str(node.get("sku") or node.get("productID") or node.get("identifier") or "").strip()
-        or _id_from_url(detail_url)
-    )
-    if not detail_id:
-        return None
-
-    price = _num(offers.get("price") or node.get("price"))
-    # area: schema.org floorSize.value, or a custom field
-    floor = node.get("floorSize") or {}
-    area = _num(floor.get("value") if isinstance(floor, dict) else floor)
-
-    addr = node.get("address") or {}
-    if not isinstance(addr, dict):
-        addr = {}
-
-    return {
-        "detail_id": detail_id,
-        "title": node.get("name"),
-        "category": node.get("category") or node.get("@type") if isinstance(node.get("@type"), str) else node.get("category"),
-        "area_m2": area,
-        "price_eur": price,
-        "region": addr.get("addressRegion"),
-        "district": addr.get("addressCounty") or addr.get("addressRegion"),
-        "city": addr.get("addressLocality"),
-        "street": addr.get("streetAddress"),
-        "valid_from": _date_or_none(offers.get("validFrom") or node.get("datePosted")),
-        "detail_url": detail_url,
-    }
-
-
-def _id_from_url(url: str | None) -> str:
-    if not url:
-        return ""
-    m = re.search(r"/([A-Za-z0-9]+)/?$", url.rstrip("/"))
-    return m.group(1) if m else ""
-
-
 def _date_or_none(value):
     if not value:
         return None
@@ -269,26 +236,78 @@ def _date_or_none(value):
         return None
 
 
+def _parse_item(item: dict, slug: str) -> dict | None:
+    """Map one schema.org listing object (from the RSC stream) to a partial bronze row.
+
+    Geo is derived from the sweep's slug — the results-page objects don't carry the
+    listing locality. Captures structured FACTS only; description prose is never read.
+    Returns None if there's no /detail/ url to key on.
+    """
+    url = item.get("url")
+    if not url or "/detail/" not in url:
+        return None
+    m = _DETAIL_ID_RE.search(url)
+    detail_id = m.group(1) if m else None
+    if not detail_id:
+        return None
+
+    price = _num((item.get("priceSpecification") or {}).get("price")) or \
+        _num((item.get("offers") or {}).get("price"))
+    area = _num((item.get("floorSize") or {}).get("value"))
+    rooms = item.get("numberOfRooms")
+    try:
+        rooms = int(rooms) if rooms is not None else None
+    except (TypeError, ValueError):
+        rooms = None
+
+    geo = locality_geo(slug)
+    offers = item.get("offers") or {}
+    return {
+        "detail_id": detail_id,
+        "detail_url": url,
+        "title": item.get("name"),
+        "category": item.get("category"),
+        "rooms": rooms,
+        "area_m2": area,
+        "price_eur": price,
+        "region": geo["region"],
+        "district": geo["district"],
+        "city": geo["city"],
+        "street": None,  # not in the results payload; left for the GPS phases
+        "valid_from": _date_or_none(offers.get("validFrom") or item.get("datePosted")),
+    }
+
+
 def _extract_listings_from_html(html: str, slug: str, deal: str) -> tuple[list[dict], list[str]]:
     """Turn one results page into partial bronze rows. Returns (rows, warnings).
 
-    Strategy: prefer JSON-LD (stable schema.org), which is the Task-0 target.
-    The `__next_f` fallback is left as a marked TODO returning nothing until the
-    payload is confirmed by recon().
+    Listings are schema.org objects embedded in the Next.js __next_f RSC stream,
+    each keyed under `"item": {...}` and carrying a /detail/<id>/ url. We reconstruct
+    the stream, then balance-match each `item` object and read its structured fields.
     """
     warnings: list[str] = []
     rows: list[dict] = []
+    seen: set[str] = set()
 
-    for block in _extract_jsonld_blocks(html):
-        for node in _walk_listing_nodes(block):
-            row = _parse_jsonld_listing(node, slug, deal)
-            if row:
-                rows.append(row)
+    stream = _reconstruct_stream(html)
+    for m in re.finditer(r'"item"\s*:\s*\{', stream):
+        brace = stream.index("{", m.end() - 1)
+        obj = _balanced_object(stream, brace)
+        if not obj or "/detail/" not in obj:
+            continue
+        try:
+            item = json.loads(obj)
+        except json.JSONDecodeError:
+            continue
+        row = _parse_item(item, slug)
+        if row and row["detail_id"] not in seen:
+            seen.add(row["detail_id"])
+            rows.append(row)
 
     if not rows:
         warnings.append(
-            "no listings parsed from JSON-LD — confirm payload via recon() (Task 0); "
-            "__next_f fallback not yet implemented"
+            "no listings parsed from __next_f — site payload may have changed; "
+            "run recon(full=True) and re-check the `item` object shape"
         )
     return rows, warnings
 
@@ -312,6 +331,9 @@ def _finalize_rows(partial: list[dict], slug: str, deal: str, scraped_at: dateti
         area = p.get("area_m2")
         ppm2 = (price / area) if (price and area) else None
         category = p.get("category")
+        rooms = p.get("rooms")
+        if rooms is None:
+            rooms = _derive_rooms(category)  # fallback when numberOfRooms is absent
         out.append(
             {
                 "scraped_at": scraped_at,
@@ -322,7 +344,7 @@ def _finalize_rows(partial: list[dict], slug: str, deal: str, scraped_at: dateti
                 "detail_id": did,
                 "title": p.get("title"),
                 "category": category,
-                "rooms": _derive_rooms(category),
+                "rooms": rooms,
                 "area_m2": area,
                 "price_eur": price,
                 "price_per_m2": ppm2,
@@ -417,9 +439,25 @@ def _result(df, n_pages, cap_hit, status, error) -> dict:
 # Public: recon (Task 0) — dump the real payload structure, parse NOTHING for keeps
 # ---------------------------------------------------------------------------
 
-def recon(slug: str, deal: str, page: int = 1, *, sample_chars: int = 4000) -> dict:
+# Candidate substrings that, if present in the __next_f payload, point at listing
+# data. Used to locate the listing array without knowing the exact field names yet.
+_RECON_MARKERS = (
+    "/detail/", "detail_url", "transactionType", "advertisement", "advertismentType",
+    "realEstate", "realty", "price", "totalPrice", "unitPrice", "priceInfo",
+    "rooms", "roomCount", "area", "usableArea", "floorArea", "category",
+    "title", "name", "locality", "gps", "latitude", "longitude", "slug", "EUR",
+)
+
+
+def recon(slug: str, deal: str, page: int = 1, *, sample_chars: int = 4000,
+          full: bool = False) -> dict:
     """Fetch one results page and report its structure so the parser can be fixed
-    against live data. Returns counts + truncated samples (no Blob writes)."""
+    against live data (no Blob writes).
+
+    The site renders listings in the Next.js `__next_f` Flight payload (no JSON-LD),
+    so this scans the joined payload for listing-data markers, returns a window
+    around the first strong hit, and (with full=True) the entire joined payload.
+    """
     sess = _new_session()
     url = _search_url(slug, deal, page)
     out: dict = {"url": url, "slug": slug, "deal": deal, "page": page}
@@ -441,19 +479,35 @@ def recon(slug: str, deal: str, page: int = 1, *, sample_chars: int = 4000) -> d
     out["jsonld_types"] = [
         (b.get("@type") if isinstance(b, dict) else type(b).__name__) for b in blocks
     ]
-    listing_nodes = [n for b in blocks for n in _walk_listing_nodes(b)]
-    out["jsonld_listing_node_count"] = len(listing_nodes)
-    if listing_nodes:
-        out["jsonld_listing_sample"] = json.dumps(listing_nodes[0], ensure_ascii=False)[:sample_chars]
-    elif blocks:
-        out["jsonld_first_block_sample"] = json.dumps(blocks[0], ensure_ascii=False)[:sample_chars]
 
     next_f = _NEXT_F_RE.findall(html)
     out["next_f_chunk_count"] = len(next_f)
+    joined = ""
     if next_f:
         joined = "".join(json.loads(c) for c in next_f if c)
         out["next_f_length"] = len(joined)
-        out["next_f_sample"] = joined[:sample_chars]
+
+        # Marker scan: which listing-data tokens appear, and where first.
+        markers = {}
+        for m in _RECON_MARKERS:
+            idx = joined.find(m)
+            if idx != -1:
+                markers[m] = {"count": joined.count(m), "first_index": idx}
+        out["next_f_markers"] = markers
+
+        # Window around the first strong marker so the listing-object shape is visible.
+        strong = ("/detail/", "transactionType", "advertisement", "realEstate",
+                  "priceInfo", "totalPrice", "usableArea")
+        anchor = min((markers[m]["first_index"] for m in strong if m in markers), default=None)
+        if anchor is None and markers:
+            anchor = min(v["first_index"] for v in markers.values())
+        if anchor is not None:
+            start = max(0, anchor - 500)
+            out["next_f_window"] = joined[start:start + 3000]
+        out["next_f_head"] = joined[:sample_chars]
+
+        if full:
+            out["next_f_full"] = joined  # entire joined payload (~30 KB)
 
     parsed, warns = _extract_listings_from_html(html, slug, deal)
     out["parsed_row_count"] = len(parsed)

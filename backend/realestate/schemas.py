@@ -35,38 +35,55 @@ DEALS = ("predaj", "prenajom")  # sale / rent
 
 # The 21 scrape localities = 17 Bratislava mestské časti (boroughs) + 4 corridor towns.
 # `slug` is the nehnutelnosti.sk locality slug used in the search URL and is the unit
-# of work in the ledger; `name` is the human label; `kind` distinguishes the choropleth
-# boroughs from the corridor polygons.
+# of work in the ledger; `name` is the human label (and the canonical `city` value
+# written to bronze — the choropleth grain); `okres` is the district (gold okres grain);
+# `kind` distinguishes the choropleth boroughs from the corridor polygons.
 #
-# NOTE: the slug strings below are PLACEHOLDERS to be confirmed against real search URLs
-# in Task 0 (payload recon) before the first live sweep. Names/kinds are correct.
+# The search-results JSON-LD does NOT carry the listing locality, so city/district/region
+# are derived from the sweep's slug (each sweep targets exactly one locality). Confirmed
+# against live payloads in Task 0: slugs + URL template are correct; listings live in the
+# __next_f RSC payload as schema.org objects (see scraper._extract_listings_from_html).
 LOCALITIES: tuple[dict, ...] = (
     # --- 17 Bratislava boroughs (choropleth regions) ---
-    {"slug": "bratislava-stare-mesto",          "name": "Staré Mesto",          "kind": "borough"},
-    {"slug": "bratislava-ruzinov",              "name": "Ružinov",              "kind": "borough"},
-    {"slug": "bratislava-vrakuna",              "name": "Vrakuňa",              "kind": "borough"},
-    {"slug": "bratislava-podunajske-biskupice", "name": "Podunajské Biskupice", "kind": "borough"},
-    {"slug": "bratislava-nove-mesto",           "name": "Nové Mesto",           "kind": "borough"},
-    {"slug": "bratislava-raca",                 "name": "Rača",                 "kind": "borough"},
-    {"slug": "bratislava-vajnory",              "name": "Vajnory",              "kind": "borough"},
-    {"slug": "bratislava-karlova-ves",          "name": "Karlova Ves",          "kind": "borough"},
-    {"slug": "bratislava-dubravka",             "name": "Dúbravka",             "kind": "borough"},
-    {"slug": "bratislava-lamac",                "name": "Lamač",                "kind": "borough"},
-    {"slug": "bratislava-devin",                "name": "Devín",                "kind": "borough"},
-    {"slug": "bratislava-devinska-nova-ves",    "name": "Devínska Nová Ves",    "kind": "borough"},
-    {"slug": "bratislava-zahorska-bystrica",    "name": "Záhorská Bystrica",    "kind": "borough"},
-    {"slug": "bratislava-petrzalka",            "name": "Petržalka",            "kind": "borough"},
-    {"slug": "bratislava-jarovce",              "name": "Jarovce",              "kind": "borough"},
-    {"slug": "bratislava-rusovce",              "name": "Rusovce",              "kind": "borough"},
-    {"slug": "bratislava-cunovo",               "name": "Čunovo",               "kind": "borough"},
-    # --- 4 corridor towns (separate polygons, not Bratislava boroughs) ---
-    {"slug": "stupava",  "name": "Stupava",  "kind": "corridor"},
-    {"slug": "marianka", "name": "Marianka", "kind": "corridor"},
-    {"slug": "borinka",  "name": "Borinka",  "kind": "corridor"},
-    {"slug": "lozorno",  "name": "Lozorno",  "kind": "corridor"},
+    {"slug": "bratislava-stare-mesto",          "name": "Staré Mesto",          "okres": "okres Bratislava I",   "kind": "borough"},
+    {"slug": "bratislava-ruzinov",              "name": "Ružinov",              "okres": "okres Bratislava II",  "kind": "borough"},
+    {"slug": "bratislava-vrakuna",              "name": "Vrakuňa",              "okres": "okres Bratislava II",  "kind": "borough"},
+    {"slug": "bratislava-podunajske-biskupice", "name": "Podunajské Biskupice", "okres": "okres Bratislava II",  "kind": "borough"},
+    {"slug": "bratislava-nove-mesto",           "name": "Nové Mesto",           "okres": "okres Bratislava III", "kind": "borough"},
+    {"slug": "bratislava-raca",                 "name": "Rača",                 "okres": "okres Bratislava III", "kind": "borough"},
+    {"slug": "bratislava-vajnory",              "name": "Vajnory",              "okres": "okres Bratislava III", "kind": "borough"},
+    {"slug": "bratislava-karlova-ves",          "name": "Karlova Ves",          "okres": "okres Bratislava IV",  "kind": "borough"},
+    {"slug": "bratislava-dubravka",             "name": "Dúbravka",             "okres": "okres Bratislava IV",  "kind": "borough"},
+    {"slug": "bratislava-lamac",                "name": "Lamač",                "okres": "okres Bratislava IV",  "kind": "borough"},
+    {"slug": "bratislava-devin",                "name": "Devín",                "okres": "okres Bratislava IV",  "kind": "borough"},
+    {"slug": "bratislava-devinska-nova-ves",    "name": "Devínska Nová Ves",    "okres": "okres Bratislava IV",  "kind": "borough"},
+    {"slug": "bratislava-zahorska-bystrica",    "name": "Záhorská Bystrica",    "okres": "okres Bratislava IV",  "kind": "borough"},
+    {"slug": "bratislava-petrzalka",            "name": "Petržalka",            "okres": "okres Bratislava V",   "kind": "borough"},
+    {"slug": "bratislava-jarovce",              "name": "Jarovce",              "okres": "okres Bratislava V",   "kind": "borough"},
+    {"slug": "bratislava-rusovce",              "name": "Rusovce",              "okres": "okres Bratislava V",   "kind": "borough"},
+    {"slug": "bratislava-cunovo",               "name": "Čunovo",               "okres": "okres Bratislava V",   "kind": "borough"},
+    # --- 4 corridor towns (separate polygons, not Bratislava boroughs; okres Malacky) ---
+    {"slug": "stupava",  "name": "Stupava",  "okres": "okres Malacky", "kind": "corridor"},
+    {"slug": "marianka", "name": "Marianka", "okres": "okres Malacky", "kind": "corridor"},
+    {"slug": "borinka",  "name": "Borinka",  "okres": "okres Malacky", "kind": "corridor"},
+    {"slug": "lozorno",  "name": "Lozorno",  "okres": "okres Malacky", "kind": "corridor"},
 )
 
 LOCALITY_SLUGS = tuple(loc["slug"] for loc in LOCALITIES)
+
+# All v1 localities sit in Bratislavský kraj (incl. okres Malacky).
+REGION = "Bratislavský kraj"
+
+_LOCALITY_BY_SLUG = {loc["slug"]: loc for loc in LOCALITIES}
+
+
+def locality_geo(slug: str) -> dict:
+    """Geo attributes for a slug, written to bronze when the payload lacks them.
+    Returns {city, district, region, kind} (empty strings for an unknown slug)."""
+    loc = _LOCALITY_BY_SLUG.get(slug)
+    if not loc:
+        return {"city": None, "district": None, "region": REGION, "kind": None}
+    return {"city": loc["name"], "district": loc["okres"], "region": REGION, "kind": loc["kind"]}
 
 # The full daily work set is the cartesian product (locality, deal): 21 × 2 = 42 units.
 def scrape_units() -> list[tuple[str, str]]:

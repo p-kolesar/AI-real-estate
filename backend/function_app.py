@@ -117,7 +117,8 @@ def scrape_realestate(req: func.HttpRequest) -> func.HttpResponse:
 
     if p.get("debug") == "raw":
         page = int(p.get("page", 1))
-        return _json(scraper.recon(locality, deal, page=page))
+        full = p.get("full", "").lower() in ("1", "true", "yes")
+        return _json(scraper.recon(locality, deal, page=page, full=full))
 
     write_bronze = p.get("dry", "").lower() not in ("1", "true", "yes")
     try:
