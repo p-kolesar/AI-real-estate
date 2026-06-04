@@ -1,9 +1,17 @@
 {
-  "IsEncrypt": false,
+  "IsEncrypted": false,
   "Values": {
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "APPLICATIONINSIGHTS_CONNECTION_STRING": "",
-    "CLAUDE_API_KEY": "sk-ant-..."
-  }
+    "CLAUDE_API_KEY": "sk-ant-...",
+    "WEBSITE_TIME_ZONE": "Central Europe Standard Time",
+
+    "_comment_scraper": "Optional scraper tuning. Defaults are timeout-safe for host.json's 5-min functionTimeout. The charter's 20-40s delay needs a higher functionTimeout.",
+    "SCRAPE_MIN_DELAY_S": "4",
+    "SCRAPE_MAX_DELAY_S": "9",
+    "SCRAPE_MAX_PAGES": "33",
+    "SCRAPE_PAGE_SIZE": "30"
+  },
+  "ConnectionStrings": {}
 }

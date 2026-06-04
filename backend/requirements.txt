@@ -3,8 +3,6 @@ azure-functions
 azure-storage-blob
 polars
 pyarrow
-requests
-anthropic
-
-# Real-estate scraper (realestate/scraper.py)
-azure-identity  # managed-identity storage path in _blob_service
+requests       # realestate/scraper.py — paged HTTP fetch + JSON-LD parse
+anthropic      # agent/loop.py — daily brief (read-only)
+tzdata         # IANA tz DB for Polars UTC-aware datetimes (no system zoneinfo on some hosts)

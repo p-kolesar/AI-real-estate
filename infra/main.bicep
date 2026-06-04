@@ -26,6 +26,21 @@ param pythonVersion string = '3.13'
 @secure()
 param claudeApiKey string = ''
 
+@description('IANA/Windows time zone for the timer triggers (ingestion window + daily build are Bratislava-local).')
+param websiteTimeZone string = 'Central Europe Standard Time'
+
+// ---- Scraper tuning (realestate/scraper.py reads these as env vars) ---------
+// Defaults are timeout-safe for host.json's 5-min functionTimeout. To honor the
+// charter 20-40s inter-page delay, raise functionTimeout AND these together.
+@description('Min seconds between page fetches within one sweep.')
+param scrapeMinDelayS string = '4'
+@description('Max seconds between page fetches within one sweep.')
+param scrapeMaxDelayS string = '9'
+@description('Hard per-sweep page cap (pages x page size results; the ~990 guard).')
+param scrapeMaxPages string = '33'
+@description('Expected listings per full results page (used to detect the last page).')
+param scrapePageSize string = '30'
+
 // ---- Derived names ----------------------------------------------------------
 var uniqueSuffix = uniqueString(resourceGroup().id)
 var storageAccountName = take(toLower('st${baseName}${environmentName}${uniqueSuffix}'), 24)
@@ -65,8 +80,15 @@ resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/con
   }
 }
 
-// Add project data containers here as you build (declare them so infra owns
-// them rather than relying on runtime create_container()).
+// Medallion data lake container (bronze/silver/gold/meta/agent prefixes live here).
+// Infra owns it so the app never relies on a runtime create_container().
+resource realestateContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: 'realestate'
+  properties: {
+    publicAccess: 'None'
+  }
+}
 
 var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
 
@@ -154,6 +176,29 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
         {
           name: 'CLAUDE_API_KEY'
           value: claudeApiKey
+        }
+        // Timer triggers are scheduled in local time; the ingestion window
+        // (06:00–22:00) and the daily build (~22:30) are Bratislava-local.
+        {
+          name: 'WEBSITE_TIME_ZONE'
+          value: websiteTimeZone
+        }
+        // Scraper tuning — set on creation so no manual portal config is needed.
+        {
+          name: 'SCRAPE_MIN_DELAY_S'
+          value: scrapeMinDelayS
+        }
+        {
+          name: 'SCRAPE_MAX_DELAY_S'
+          value: scrapeMaxDelayS
+        }
+        {
+          name: 'SCRAPE_MAX_PAGES'
+          value: scrapeMaxPages
+        }
+        {
+          name: 'SCRAPE_PAGE_SIZE'
+          value: scrapePageSize
         }
       ]
       // The Static Web App calls this API cross-origin (build-time

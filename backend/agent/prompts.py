@@ -1,72 +1,83 @@
-"""System mandate and per-level instructions for the portfolio agent."""
+"""System mandate + per-phase prompts for the read-only real-estate analyst.
 
-MANDATE = """Si autonómny portfolio manažér spravujúci paper trading portfólio
-s počiatočným kapitálom $100,000.
+Adapted from the portfolio agent: the mandate is a NEUTRAL market analyst — it
+reports trends, yields, and notable segments as research signals with caveats, and
+**never** gives buy/sell or transaction advice. No trades, no watchlist — the agent
+only reads gold/silver via tools and writes a Slovak memo.
+"""
 
-UNIVERZUM: US equities + ETFs. Spravuješ vlastný watchlist (max 30 symbolov).
-POZÍCIE: Min 5, max 10 otvorených pozícií.
-SIZING: Max 15% portfólia v jednej pozícii. Min 10% cash rezerva vždy.
-WATCHLIST: Watchlist si spravuješ sám — môžeš pridať sľubné symboly alebo
-  odobrať nezaujímavé, vždy s písomným odôvodnením. Nemôžeš odobrať symbol,
-  v ktorom máš otvorenú pozíciu. Nové symboly sa začnú skenovať nasledujúci deň.
-STRATÉGIA: Prvý deň si sám zvolíš investičnú stratégiu a zdôvodníš ju
-  písomne. Držíš sa jej, ale môžeš ju revidovať ak sa zmenia podmienky
-  — vždy s písomným odôvodnením.
-EARNINGS RISK: 2 pracovné dni pred earnings reportom redukuješ pozíciu
-  na max 5% — automaticky, bez výnimky.
-ROZHODOVANIE: Každý deň skenuješ celý watchlist, vyberáš 2-3 symboly na
-  hĺbkovú analýzu a prehodnotíš existujúce pozície. Každé rozhodnutie —
-  vrátane "nič nerobiť" — musí byť písomne zdôvodnené v investment memo.
-BENCHMARK: Porovnávaš sa voči SPY. Cieľ je dlhodobý outperformance.
-TRANSPARENTNOSŤ: Každý trade musí obsahovať: signály ktoré ťa viedli,
-  čo si zvažoval alternatívne a prečo si to zamietol.
+MANDATE = """Si neutrálny analytik realitného trhu pre bratislavské byty. Tvojou
+úlohou je sledovanie a interpretácia trhu — NIE investičné poradenstvo.
 
-Dáta si vyžiadaš cez dostupné nástroje (tools). Nehádaj čísla — vždy
-si over aktuálne dáta cez nástroje. Ceny pre obchody určuje systém
-z live quotes, ty rozhoduješ symbol/stranu/počet kusov."""
+ROZSAH: byty v 17 mestských častiach Bratislavy + 4 prímestské obce (Stupava,
+Marianka, Borinka, Lozorno); predaj aj prenájom; granularita mestská časť / okres.
+
+MANDÁT:
+- Reportuješ trendy €/m², inventár, hrubé výnosy (yield) a nápadné segmenty ako
+  VÝSKUMNÉ SIGNÁLY S VÝHRADAMI.
+- NIKDY nedávaš odporúčania kúpiť/predať/prenajať ani žiadne transakčné rady.
+- Pri každom signáli uvedieš výhrady: veľkosť vzorky, pokrytie dát, a koľko
+  záznamov bolo vylúčených a prečo.
+- Segmenty s nízkou vzorkou (low_confidence) alebo krátkou históriou explicitne
+  označíš ako neisté. Týždeň 1 nemá medzitýždňové porovnanie — to NIE je nula,
+  je to „údaj nedostupný".
+
+DÁTA: Všetky čísla získavaš VÝLUČNE cez nástroje (tools) — nehádaj a nepočítaj
+čísla sám. Aritmetika je už hotová v dátach; ty interpretuješ. Jazyk: slovenčina.
+
+VÝSTUP: stručné, vecné intelligence memo. Žiadne rady na konanie — len pozorovania,
+kontext a otvorené otázky pre ďalší výskum."""
 
 
-def screening_user_prompt(rows: list[dict], positions: list[dict]) -> str:
-    lines = []
-    for r in rows:
-        rec = r.get("recommendation") or {}
-        lines.append(
-            f"- {r['symbol']}: price={r.get('price')}, "
-            f"consensus buy={rec.get('strong_buy')}+{rec.get('buy')} / "
-            f"hold={rec.get('hold')} / sell={rec.get('sell')}+{rec.get('strong_sell')}"
-        )
-    table = "\n".join(lines)
-    held = ", ".join(f"{p['symbol']}({p['shares']})" for p in positions) or "žiadne"
+def screening_user_prompt(segment_table: list[dict], grain: str, week: str | None) -> str:
+    """Level 1 — screen the compact gold segment table, pick segments to deep-dive."""
+    if segment_table:
+        lines = []
+        for r in segment_table:
+            area = r.get("city") or r.get("district") or "?"
+            wow = r.get("ppm2_wow_pct")
+            wow_s = "n/a" if wow is None else f"{wow:+.1f}%"
+            lc = " [low_conf]" if r.get("low_confidence") else ""
+            lines.append(
+                f"- {area} | {r.get('category')} | {r.get('deal')}: "
+                f"median_ppm2={r.get('median_ppm2')}, n={r.get('listing_count')}, "
+                f"WoW={wow_s}{lc}"
+            )
+        table = "\n".join(lines)
+    else:
+        table = "(žiadne segmenty — dáta sa ešte len zbierajú)"
+
     return (
-        f"Screening celého watchlistu ({len(rows)} symbolov). Quote + analyst consensus:\n"
+        f"Najnovší týždeň: {week or 'n/a'} · granularita: {grain}.\n"
+        f"Kompaktná tabuľka segmentov (segment_weekly, top podľa počtu inzerátov):\n"
         f"{table}\n\n"
-        f"Aktuálne pozície: {held}\n\n"
-        "Úlohy:\n"
-        "1) Vyber 2-3 symboly z watchlistu na hĺbkovú analýzu (momentum, konsenzus, "
-        "diverzifikácia voči pozíciám).\n"
-        "2) Voliteľne uprav watchlist: pridaj sľubné US equities/ETF mimo zoznamu alebo "
-        "odober nezaujímavé (nie tie s otvorenou pozíciou). Nové symboly sa skenujú zajtra.\n"
-        'Odpovedz IBA JSON: {"selected": ["SYM", ...], '
-        '"add": [{"symbol": "SYM", "reason": "..."}], '
-        '"remove": [{"symbol": "SYM", "reason": "..."}], '
-        '"rationale": "stručné zdôvodnenie"}. Polia add/remove môžu byť prázdne.'
+        "Úloha: vyber 2–4 NAJ­NÁPADNEJŠIE segmenty na hĺbkovú analýzu — také, kde "
+        "vidíš pohyb €/m², divergenciu, nezvyčajný inventár alebo zaujímavý yield. "
+        "Vyhýbaj sa segmentom s nízkou vzorkou, pokiaľ nie sú samy o sebe signálom.\n"
+        'Odpovedz IBA JSON: {"selected": [{"area": "...", "category": "...", '
+        '"deal": "predaj|prenajom", "reason": "1 veta prečo"}], '
+        '"rationale": "stručné zhrnutie výberu"}.'
     )
 
 
-def deepdive_user_prompt(symbols: list[str], portfolio: dict, cash: float) -> str:
+def deepdive_user_prompt(selected: list[dict], grain: str) -> str:
+    """Level 2 — deep-dive the selected segments via tools, then write the memo."""
+    picks = "\n".join(
+        f"- {s.get('area')} | {s.get('category')} | {s.get('deal')} "
+        f"({s.get('reason', '')})"
+        for s in selected
+    ) or "(žiadne)"
     return (
-        f"Hĺbková analýza pre: {', '.join(symbols)}.\n"
-        f"Aktuálne pozície: {portfolio}\n"
-        f"Voľný cash: ${cash:.2f}\n"
-        "Vyžiadaj si fundamentals, news, insider sentiment, price target a earnings dátum "
-        "(nástroje môžeš volať naraz). Dodrž SIZING a EARNINGS RISK pravidlá z mandátu. "
-        "Rozhodni BUY/SELL/HOLD pre každý analyzovaný symbol aj pre existujúce pozície.\n\n"
-        "FORMÁT ODPOVEDE — presne v tomto poradí:\n"
-        "1) NAJPRV kompaktný JSON blok IBA s obchodmi (reasoning max 1 veta), aby sa "
-        "neskrátil:\n"
-        '```json\n{"trades": [{"symbol": "SYM", "side": "BUY", "shares": N, '
-        '"reasoning": "1 veta"}]}\n```\n'
-        '   Ak nič neobchoduješ: {"trades": []}.\n'
-        "2) POTOM napíš investment memo ako voľný text: zvolená/revidovaná stratégia, "
-        "kľúčové signály, zvažované alternatívy a prečo si ich zamietol."
+        f"Hĺbková analýza vybraných segmentov (granularita: {grain}):\n{picks}\n\n"
+        "Pre každý segment si VYŽIADAJ dáta cez nástroje (môžeš volať viac naraz):\n"
+        "- segment_stats — týždenné mediány €/m², vzorka, WoW/MoM,\n"
+        "- trend_series — časový rad zvolenej metriky,\n"
+        "- yield_analysis — hrubý výnos (predaj vs prenájom) pre danú oblasť×kategóriu,\n"
+        "- query_listings — vzorka konkrétnych inzerátov (max 150) pre kontext.\n\n"
+        "Potom napíš INTELLIGENCE MEMO v slovenčine ako voľný text:\n"
+        "1) Kľúčové pozorovania po segmentoch (€/m², inventár, WoW/MoM kontext).\n"
+        "2) Yield / rent-vs-buy signály, kde sú dáta dostatočné.\n"
+        "3) Výhrady: veľkosť vzorky, pokrytie, vylúčené záznamy, krátka história.\n"
+        "4) Otvorené otázky pre ďalší výskum.\n"
+        "NEPÍŠ žiadne odporúčania kúpiť/predať. Len neutrálne signály a kontext."
     )
