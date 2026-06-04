@@ -1,0 +1,77 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  APP_DIR: frontend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Discover the Function App host (for VITE_API_BASE) and the Static Web
+      # App + its deployment token — all from the resource group, so no extra
+      # GitHub secrets are needed beyond AZURE_CREDENTIALS.
+      - name: Discover backend host + SWA token
+        id: discover
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            funcHost=$(az functionapp list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query "[0].defaultHostName" -o tsv)
+            swaName=$(az staticwebapp list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query "[0].name" -o tsv)
+            if [ -z "$funcHost" ] || [ -z "$swaName" ]; then
+              echo "::error::Function App or Static Web App not found in $AZURE_RESOURCE_GROUP. Run the Infra workflow first."
+              exit 1
+            fi
+            token=$(az staticwebapp secrets list \
+              --name "$swaName" \
+              --query "properties.apiKey" -o tsv)
+            echo "func_host=$funcHost" >> "$GITHUB_OUTPUT"
+            echo "::add-mask::$token"
+            echo "swa_token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ env.APP_DIR }}/package-lock.json
+
+      - name: Install + build
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          VITE_API_BASE: https://${{ steps.discover.outputs.func_host }}/api
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy to Static Web App
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.discover.outputs.swa_token }}
+          action: upload
+          app_location: ${{ env.APP_DIR }}/dist
+          skip_app_build: true
+          skip_api_build: true

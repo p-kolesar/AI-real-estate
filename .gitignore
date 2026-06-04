@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.python_packages/
+
+# Azure Functions
+local.settings.json
+bin/
+obj/
+
+# Build artifacts
+*.zip
+
+# Bicep
+*.bicepparam.json
+
+# Editor / OS / tooling
+.vscode/
+.idea/
+.claude/
+.DS_Store
+Thumbs.db
+
+# Azurite local-storage emulator artifacts
+__azurite_db*__*
+__blobstorage__/
+__queuestorage__/

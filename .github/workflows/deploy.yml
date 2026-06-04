@@ -1,0 +1,76 @@
+name: Deploy (Function code)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Discover Function App name
+        id: discover
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            name=$(az functionapp list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query "[0].name" -o tsv)
+            host=$(az functionapp list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query "[0].defaultHostName" -o tsv)
+            if [ -z "$name" ]; then
+              echo "::error::No Function App found in resource group $AZURE_RESOURCE_GROUP. Run the Infra workflow first."
+              exit 1
+            fi
+            echo "name=$name" >> "$GITHUB_OUTPUT"
+            echo "host=$host" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to Function App
+        uses: azure/functions-action@v1
+        with:
+          app-name: ${{ steps.discover.outputs.name }}
+          package: backend
+          remote-build: true
+
+      - name: Smoke test /api/health
+        run: |
+          host="${{ steps.discover.outputs.host }}"
+          url="https://$host/api/health"
+          echo "Probing $url"
+          for attempt in $(seq 1 10); do
+            code=$(curl -s -o /tmp/body -w "%{http_code}" "$url" || true)
+            if [ "$code" = "200" ]; then
+              echo "Health OK: $(cat /tmp/body)"
+              exit 0
+            fi
+            echo "Attempt $attempt: HTTP $code — retrying in 15s"
+            sleep 15
+          done
+          echo "::error::Health check did not return 200 in time"
+          cat /tmp/body || true
+          exit 1

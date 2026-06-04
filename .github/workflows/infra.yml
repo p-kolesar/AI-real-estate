@@ -1,0 +1,70 @@
+name: Infra (Bicep)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+  AZURE_BASE_NAME: ${{ vars.AZURE_BASE_NAME }}
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create resource group (idempotent)
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az group create \
+              --name "$AZURE_RESOURCE_GROUP" \
+              --location "$AZURE_LOCATION"
+
+      - name: Deploy Bicep
+        uses: azure/cli@v2
+        env:
+          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
+        with:
+          inlineScript: |
+            # baseName: use the AZURE_BASE_NAME variable if set, else fall back to
+            # the parameters.json default ('myapp'). claudeApiKey is optional — the
+            # bare shell deploys without it; set the secret once you add an agent.
+            outputs=$(az deployment group create \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "infra-$GITHUB_RUN_NUMBER" \
+              --template-file infra/main.bicep \
+              --parameters infra/main.parameters.json \
+              --parameters baseName="${AZURE_BASE_NAME:-myapp}" \
+              --parameters claudeApiKey="$CLAUDE_API_KEY" \
+              --query properties.outputs -o json)
+
+            funcName=$(echo "$outputs" | jq -r '.functionAppName.value')
+            host=$(echo "$outputs" | jq -r '.functionAppDefaultHostname.value')
+            swaHost=$(echo "$outputs" | jq -r '.staticWebAppHostname.value')
+
+            {
+              echo "## Infra deployed"
+              echo ""
+              echo "| Output | Value |"
+              echo "| --- | --- |"
+              echo "| Resource group | \`$AZURE_RESOURCE_GROUP\` |"
+              echo "| Function App | \`$funcName\` |"
+              echo "| Hostname | https://$host |"
+              echo "| Frontend | https://$swaHost |"
+            } >> "$GITHUB_STEP_SUMMARY"

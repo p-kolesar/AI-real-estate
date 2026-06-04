@@ -1,0 +1,3 @@
+# Azure Functions Python worker.
+# Add your project dependencies below (e.g. anthropic, azure-storage-blob, polars).
+azure-functions
