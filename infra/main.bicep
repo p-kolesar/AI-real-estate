@@ -64,8 +64,6 @@ var deploymentStorageConnSettingName = 'DEPLOYMENT_STORAGE_CONNECTION_STRING'
 var scraperFunctionAppName = 'func-${baseName}-scraper-${environmentName}-${uniqueSuffix}'
 var containerEnvName = 'cae-${baseName}-${environmentName}'
 var acrName = take(toLower('cr${baseName}${environmentName}${uniqueSuffix}'), 50)
-// Built-in AcrPull role — lets the scraper app's managed identity pull the image.
-var acrPullRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
 
 // ---- Storage ----------------------------------------------------------------
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
@@ -253,8 +251,11 @@ resource staticSite 'Microsoft.Web/staticSites@2024-04-01' = {
 }
 
 // ---- Container registry -----------------------------------------------------
-// Holds the scraper image. adminUser stays off — the scraper app pulls via its
-// managed identity (AcrPull role below), not username/password.
+// Holds the scraper image. adminUser is ON so the scraper app can pull with the
+// registry username/password (below) — this avoids needing a role assignment,
+// which a Contributor service principal isn't allowed to create. To switch to
+// managed-identity pull instead, grant the deploy SP "User Access Administrator"
+// and re-add an AcrPull roleAssignment + acrUseManagedIdentityCreds.
 resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
   name: acrName
   location: location
@@ -262,7 +263,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
     name: 'Basic'
   }
   properties: {
-    adminUserEnabled: false
+    adminUserEnabled: true
   }
 }
 
@@ -292,15 +293,11 @@ resource scraperFunctionApp 'Microsoft.Web/sites@2024-04-01' = {
   name: scraperFunctionAppName
   location: location
   kind: 'functionapp,linux,container,azurecontainerapps'
-  identity: {
-    type: 'SystemAssigned'
-  }
   properties: {
     managedEnvironmentId: containerEnv.id
     httpsOnly: true
     siteConfig: {
       linuxFxVersion: 'DOCKER|${scraperImage}'
-      acrUseManagedIdentityCreds: true
       appSettings: [
         {
           name: 'FUNCTIONS_EXTENSION_VERSION'
@@ -314,6 +311,20 @@ resource scraperFunctionApp 'Microsoft.Web/sites@2024-04-01' = {
         {
           name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE'
           value: 'false'
+        }
+        // ACR pull via admin credentials (the public bootstrap image needs none;
+        // these kick in once CI points the app at the ACR-hosted image).
+        {
+          name: 'DOCKER_REGISTRY_SERVER_URL'
+          value: 'https://${acr.properties.loginServer}'
+        }
+        {
+          name: 'DOCKER_REGISTRY_SERVER_USERNAME'
+          value: acr.listCredentials().username
+        }
+        {
+          name: 'DOCKER_REGISTRY_SERVER_PASSWORD'
+          value: acr.listCredentials().passwords[0].value
         }
         {
           name: 'AzureWebJobsStorage'
@@ -351,17 +362,6 @@ resource scraperFunctionApp 'Microsoft.Web/sites@2024-04-01' = {
         }
       ]
     }
-  }
-}
-
-// Let the scraper app's managed identity pull from ACR (scoped to this registry).
-resource acrPullAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(acr.id, scraperFunctionApp.id, acrPullRoleId)
-  scope: acr
-  properties: {
-    roleDefinitionId: acrPullRoleId
-    principalId: scraperFunctionApp.identity.principalId
-    principalType: 'ServicePrincipal'
   }
 }
 

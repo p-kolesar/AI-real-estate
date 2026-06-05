@@ -76,8 +76,8 @@ jobs:
         uses: azure/cli@v2
         with:
           inlineScript: |
-            # The app pulls via its managed identity (acrUseManagedIdentityCreds in
-            # Bicep), so no registry username/password is passed here.
+            # Registry credentials are already set as app settings by Bicep
+            # (DOCKER_REGISTRY_SERVER_*), so only the image reference changes here.
             az functionapp config container set \
               --name "${{ steps.discover.outputs.app }}" \
               --resource-group "$AZURE_RESOURCE_GROUP" \
