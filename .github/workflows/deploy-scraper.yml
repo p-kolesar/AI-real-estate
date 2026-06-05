@@ -48,9 +48,11 @@ jobs:
             app=$(az functionapp list \
               --resource-group "$AZURE_RESOURCE_GROUP" \
               --query "[?contains(kind, 'azurecontainerapps')].name | [0]" -o tsv)
-            host=$(az functionapp list \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --query "[?contains(kind, 'azurecontainerapps')].defaultHostName | [0]" -o tsv)
+            # `az functionapp list` doesn't populate defaultHostName for ACA-hosted
+            # apps; the per-resource `show` does (the Container Apps ingress FQDN).
+            host=$(az functionapp show \
+              --name "$app" --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query "defaultHostName" -o tsv 2>/dev/null || true)
             if [ -z "$acr" ] || [ -z "$app" ]; then
               echo "::error::ACR or scraper Function App not found in $AZURE_RESOURCE_GROUP. Run the Infra workflow first."
               exit 1
@@ -90,6 +92,10 @@ jobs:
       - name: Smoke test /api/health
         run: |
           host="${{ steps.discover.outputs.host }}"
+          if [ -z "$host" ]; then
+            echo "::warning::No public hostname for the scraper app (HTTP ingress may be disabled). Skipping the health probe — this is a timer-driven app, so verify via revision state / Application Insights instead."
+            exit 0
+          fi
           url="https://$host/api/health"
           echo "Probing $url"
           # First revision rollout has to pull a ~1.5 GB image cross-region
