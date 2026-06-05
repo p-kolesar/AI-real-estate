@@ -256,9 +256,10 @@ resource staticSite 'Microsoft.Web/staticSites@2024-04-01' = {
 }
 
 // ---- Container registry -----------------------------------------------------
-// Holds the scraper image. Colocated with the Container Apps region so image
-// pulls are in-region (no cross-region pull cost/latency); the registry is new
-// and holds no data, so following containerAppsLocation is free.
+// Holds the scraper image. Stays in the main `location`: an earlier run already
+// created it there, and a resource's region is immutable (can't follow
+// containerAppsLocation without deleting + recreating). Cross-region image pulls
+// to the scraper happen only on cold start and are small, so this is fine.
 // adminUser is ON so the scraper app can pull with the registry username/password
 // (below) — this avoids needing a role assignment, which a Contributor service
 // principal isn't allowed to create. To switch to managed-identity pull instead,
@@ -266,7 +267,7 @@ resource staticSite 'Microsoft.Web/staticSites@2024-04-01' = {
 // roleAssignment + acrUseManagedIdentityCreds.
 resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
   name: acrName
-  location: containerAppsLocation
+  location: location
   sku: {
     name: 'Basic'
   }
