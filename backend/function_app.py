@@ -68,7 +68,7 @@ if APP_ROLE == "scraper":
     # Containerized ingestion (headless browser) — Azure Container Apps
     # =======================================================================
 
-    @app.route(route="admin/scrape-tick", methods=["GET"])
+    @app.route(route="admin-scrape-tick", methods=["GET"])
     def admin_scrape_tick(req: func.HttpRequest) -> func.HttpResponse:
         """Fire one ledger-driven ingestion tick on demand (same as the timer)."""
         from realestate import ledger
@@ -144,7 +144,7 @@ else:
     # Admin / manual triggers (help the deploy → test-run loop; POST only)
     # =======================================================================
 
-    @app.route(route="admin/rebuild", methods=["POST"])
+    @app.route(route="admin-rebuild", methods=["POST"])
     def admin_rebuild(req: func.HttpRequest) -> func.HttpResponse:
         """Rebuild silver + gold on demand (no brief)."""
         from realestate import build
@@ -154,7 +154,7 @@ else:
             logging.exception("admin rebuild failed")
             return _err(str(e), 500)
 
-    @app.route(route="admin/brief", methods=["POST"])
+    @app.route(route="admin-brief", methods=["POST"])
     def admin_brief(req: func.HttpRequest) -> func.HttpResponse:
         """Run the daily brief on demand (against current gold)."""
         from agent.loop import run_agent
