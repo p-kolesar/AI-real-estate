@@ -37,16 +37,18 @@ jobs:
         uses: azure/cli@v2
         with:
           inlineScript: |
-            name=$(az functionapp list \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --query "[0].name" -o tsv)
-            host=$(az functionapp list \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --query "[0].defaultHostName" -o tsv)
+            # Pick the Flex Consumption API app, NOT the Container Apps-hosted
+            # scraper (kind contains 'azurecontainerapps'). Zip-deploy can't fetch
+            # publishing credentials for an ACA-hosted app, so targeting it fails
+            # with 'This is currently not supported'.
+            apps=$(az functionapp list --resource-group "$AZURE_RESOURCE_GROUP" -o json)
+            name=$(echo "$apps" | jq -r '[.[] | select((.kind // "") | contains("azurecontainerapps") | not)][0].name // empty')
+            host=$(echo "$apps" | jq -r '[.[] | select((.kind // "") | contains("azurecontainerapps") | not)][0].defaultHostName // empty')
             if [ -z "$name" ]; then
-              echo "::error::No Function App found in resource group $AZURE_RESOURCE_GROUP. Run the Infra workflow first."
+              echo "::error::No Flex Function App found in resource group $AZURE_RESOURCE_GROUP. Run the Infra workflow first."
               exit 1
             fi
+            echo "Targeting Flex app: $name"
             echo "name=$name" >> "$GITHUB_OUTPUT"
             echo "host=$host" >> "$GITHUB_OUTPUT"
 
