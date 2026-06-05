@@ -191,11 +191,18 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsights.properties.ConnectionString
         }
-        // Registers the read API + agent + daily build_and_brief (NOT the scraper
-        // timer, which runs in the container app with APP_ROLE=scraper).
+        // Informational label only (surfaced by /health); does not gate functions.
         {
           name: 'APP_ROLE'
           value: 'api'
+        }
+        // All functions are deployed to both apps; this app must NOT run the
+        // headless-browser ingestion timer (no Chromium here, and it would race the
+        // container app on the ledger). The HTTP admin-scrape-tick route is inert
+        // unless called, so only the timer needs disabling.
+        {
+          name: 'AzureWebJobs.scrape_next_area.Disabled'
+          value: 'true'
         }
         {
           name: 'CLAUDE_API_KEY'
@@ -345,10 +352,17 @@ resource scraperFunctionApp 'Microsoft.Web/sites@2024-04-01' = {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsights.properties.ConnectionString
         }
-        // Registers ONLY scrape_next_area (the headless-browser ingestion timer).
+        // Informational label only (surfaced by /health); does not gate functions.
         {
           name: 'APP_ROLE'
           value: 'scraper'
+        }
+        // All functions are deployed to both apps; this image has no `anthropic`,
+        // so it must NOT run the daily build_and_brief timer (that runs on the Flex
+        // app). The admin-brief HTTP route is inert unless called.
+        {
+          name: 'AzureWebJobs.build_and_brief.Disabled'
+          value: 'true'
         }
         // The NCRONTAB timer is evaluated in this zone (06:00–22:00 Bratislava).
         {
