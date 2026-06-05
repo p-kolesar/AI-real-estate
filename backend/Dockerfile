@@ -17,7 +17,11 @@ RUN pip install --no-cache-dir -r /requirements-container.txt
 
 # Chromium + the ~30 OS libraries it needs (libnss3, libatk, libgbm, …).
 # --with-deps runs apt-get for the system packages; needs the root build context.
-RUN playwright install --with-deps chromium
+# Invoked as a module: the `playwright` console script isn't on PATH in this base
+# image (only python/pip are symlinked into /usr/local/bin), so `playwright …`
+# alone fails with 'not found'. `python -m playwright` uses the same interpreter
+# pip installed into.
+RUN python -m playwright install --with-deps chromium
 
 # App code last (changes most often). .dockerignore keeps .venv/__pycache__ out.
 COPY . /home/site/wwwroot
