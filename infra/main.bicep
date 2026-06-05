@@ -60,8 +60,10 @@ var logAnalyticsName = 'log-${baseName}-${environmentName}'
 var staticSiteName = 'stapp-${baseName}-${environmentName}-${uniqueSuffix}'
 var deploymentContainerName = 'deploymentpackage'
 var deploymentStorageConnSettingName = 'DEPLOYMENT_STORAGE_CONNECTION_STRING'
-// Containerized scraper (Functions on Azure Container Apps).
-var scraperFunctionAppName = 'func-${baseName}-scraper-${environmentName}-${uniqueSuffix}'
+// Containerized scraper (Functions on Azure Container Apps). The ACA platform
+// caps this name at 32 chars (and disallows '--'), so it's kept short and fully
+// alphanumeric: 'sc' + baseName + env (capped) + a trimmed uniqueness suffix.
+var scraperFunctionAppName = '${take('sc${toLower(baseName)}${toLower(environmentName)}', 24)}${take(uniqueSuffix, 8)}'
 var containerEnvName = 'cae-${baseName}-${environmentName}'
 var acrName = take(toLower('cr${baseName}${environmentName}${uniqueSuffix}'), 50)
 
