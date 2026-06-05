@@ -1,0 +1,12 @@
+# Runtime deps for the containerized scraper Function App (APP_ROLE=scraper),
+# hosted on Azure Container Apps. Kept separate from the Flex app's
+# requirements.txt: this image carries Playwright/Chromium but NOT anthropic
+# (the daily brief stays on the Flex app), and requirements.txt stays lean for
+# the zip-deployed read API.
+azure-functions     # the v2 programming model worker (NOT in requirements-scraper.txt)
+azure-storage-blob  # storage/blobs.py + realestate/scraper delegation
+polars              # DataFrame assembly in browser_scraper / ledger
+pyarrow             # Parquet engine for polars on the ingestion write path
+playwright          # headless Chromium driver (browser_scraper.py)
+requests            # transitively imported on the realestate import path
+tzdata              # IANA tz DB for Polars / WEBSITE_TIME_ZONE on slim images

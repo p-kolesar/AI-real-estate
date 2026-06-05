@@ -109,8 +109,8 @@ def scrape_one(slug: str, deal: str, *, write_bronze: bool = True,
                update_ledger: bool = False, now: datetime | None = None) -> dict:
     """Sweep a single unit end-to-end: scrape → (write bronze) → log run.
 
-    Used by the manual `/scrape-realestate` spot-check (update_ledger=False) and by
-    `run_tick` (via the ledger). Returns a JSON-friendly summary (no DataFrame).
+    Called by `run_tick` (update_ledger=True, via the ledger); the update_ledger=False
+    variant is kept for eval/spot-checks. Returns a JSON-friendly summary (no DataFrame).
     """
     now = now or datetime.now(timezone.utc)
     date = now.date().isoformat()

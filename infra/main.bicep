@@ -41,6 +41,15 @@ param scrapeMaxPages string = '33'
 @description('Expected listings per full results page (used to detect the last page).')
 param scrapePageSize string = '30'
 
+// ---- Containerized scraper --------------------------------------------------
+// The scraper Function App runs a headless browser, so it needs a custom image
+// (impossible on Flex Consumption). On the first-ever deploy no image exists yet,
+// so we boot from the public Functions base image; the deploy-scraper workflow
+// then builds the real image and points the app at it. The infra workflow reads
+// the app's CURRENT image and passes it back here so redeploys never clobber it.
+@description('Container image for the scraper Function App (registry/repo:tag, no DOCKER| prefix). Default is a bootstrap placeholder; CI overrides it.')
+param scraperImage string = 'mcr.microsoft.com/azure-functions/python:4-python3.13'
+
 // ---- Derived names ----------------------------------------------------------
 var uniqueSuffix = uniqueString(resourceGroup().id)
 var storageAccountName = take(toLower('st${baseName}${environmentName}${uniqueSuffix}'), 24)
@@ -51,6 +60,12 @@ var logAnalyticsName = 'log-${baseName}-${environmentName}'
 var staticSiteName = 'stapp-${baseName}-${environmentName}-${uniqueSuffix}'
 var deploymentContainerName = 'deploymentpackage'
 var deploymentStorageConnSettingName = 'DEPLOYMENT_STORAGE_CONNECTION_STRING'
+// Containerized scraper (Functions on Azure Container Apps).
+var scraperFunctionAppName = 'func-${baseName}-scraper-${environmentName}-${uniqueSuffix}'
+var containerEnvName = 'cae-${baseName}-${environmentName}'
+var acrName = take(toLower('cr${baseName}${environmentName}${uniqueSuffix}'), 50)
+// Built-in AcrPull role — lets the scraper app's managed identity pull the image.
+var acrPullRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
 
 // ---- Storage ----------------------------------------------------------------
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
@@ -173,6 +188,12 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsights.properties.ConnectionString
         }
+        // Registers the read API + agent + daily build_and_brief (NOT the scraper
+        // timer, which runs in the container app with APP_ROLE=scraper).
+        {
+          name: 'APP_ROLE'
+          value: 'api'
+        }
         {
           name: 'CLAUDE_API_KEY'
           value: claudeApiKey
@@ -231,6 +252,119 @@ resource staticSite 'Microsoft.Web/staticSites@2024-04-01' = {
   }
 }
 
+// ---- Container registry -----------------------------------------------------
+// Holds the scraper image. adminUser stays off — the scraper app pulls via its
+// managed identity (AcrPull role below), not username/password.
+resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
+  name: acrName
+  location: location
+  sku: {
+    name: 'Basic'
+  }
+  properties: {
+    adminUserEnabled: false
+  }
+}
+
+// ---- Container Apps environment --------------------------------------------
+// Hosts the scraper Function App. Logs flow to the existing Log Analytics.
+resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
+  name: containerEnvName
+  location: location
+  properties: {
+    appLogsConfiguration: {
+      destination: 'log-analytics'
+      logAnalyticsConfiguration: {
+        customerId: logAnalytics.properties.customerId
+        sharedKey: logAnalytics.listKeys().primarySharedKey
+      }
+    }
+  }
+}
+
+// ---- Scraper Function App (Functions on Azure Container Apps) ----------------
+// Same backend/ code as the Flex app, but APP_ROLE=scraper registers only the
+// 20-min ingestion timer, and the image carries Chromium. Pulls the image with
+// its system-assigned identity (acrUseManagedIdentityCreds), so no registry
+// password is stored. linuxFxVersion takes the image WITHOUT a tag-less default;
+// the bootstrap value is the public base image until CI pushes the real one.
+resource scraperFunctionApp 'Microsoft.Web/sites@2024-04-01' = {
+  name: scraperFunctionAppName
+  location: location
+  kind: 'functionapp,linux,container,azurecontainerapps'
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    managedEnvironmentId: containerEnv.id
+    httpsOnly: true
+    siteConfig: {
+      linuxFxVersion: 'DOCKER|${scraperImage}'
+      acrUseManagedIdentityCreds: true
+      appSettings: [
+        {
+          name: 'FUNCTIONS_EXTENSION_VERSION'
+          value: '~4'
+        }
+        {
+          name: 'FUNCTIONS_WORKER_RUNTIME'
+          value: 'python'
+        }
+        // App content lives in the image, not in a mounted file share.
+        {
+          name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE'
+          value: 'false'
+        }
+        {
+          name: 'AzureWebJobsStorage'
+          value: storageConnectionString
+        }
+        {
+          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+          value: appInsights.properties.ConnectionString
+        }
+        // Registers ONLY scrape_next_area (the headless-browser ingestion timer).
+        {
+          name: 'APP_ROLE'
+          value: 'scraper'
+        }
+        // The NCRONTAB timer is evaluated in this zone (06:00–22:00 Bratislava).
+        {
+          name: 'WEBSITE_TIME_ZONE'
+          value: websiteTimeZone
+        }
+        {
+          name: 'SCRAPE_MIN_DELAY_S'
+          value: scrapeMinDelayS
+        }
+        {
+          name: 'SCRAPE_MAX_DELAY_S'
+          value: scrapeMaxDelayS
+        }
+        {
+          name: 'SCRAPE_MAX_PAGES'
+          value: scrapeMaxPages
+        }
+        {
+          name: 'SCRAPE_PAGE_SIZE'
+          value: scrapePageSize
+        }
+      ]
+    }
+  }
+}
+
+// Let the scraper app's managed identity pull from ACR (scoped to this registry).
+resource acrPullAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(acr.id, scraperFunctionApp.id, acrPullRoleId)
+  scope: acr
+  properties: {
+    roleDefinitionId: acrPullRoleId
+    principalId: scraperFunctionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // ---- Outputs ----------------------------------------------------------------
 output functionAppName string = functionApp.name
 output functionAppDefaultHostname string = functionApp.properties.defaultHostName
@@ -238,3 +372,7 @@ output storageAccountName string = storageAccount.name
 output resourceGroupName string = resourceGroup().name
 output staticWebAppName string = staticSite.name
 output staticWebAppHostname string = staticSite.properties.defaultHostname
+output scraperFunctionAppName string = scraperFunctionApp.name
+output scraperFunctionAppHostname string = scraperFunctionApp.properties.defaultHostName
+output containerRegistryName string = acr.name
+output containerRegistryLoginServer string = acr.properties.loginServer

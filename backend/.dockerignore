@@ -1,0 +1,16 @@
+# Keep the scraper image lean and reproducible. The local virtualenv is huge and
+# platform-specific; build artifacts and secrets must never enter the image.
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.git
+.gitignore
+.vscode
+local.settings.json
+local.settings.json.example
+tests
+*.md
+# Local-only eval helper and its CSV output (not part of the runtime).
+eval_scrape.py
+scrape_sample.csv

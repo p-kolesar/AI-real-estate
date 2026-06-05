@@ -77,7 +77,10 @@ All routes are served under `/api`.
 | `/realestate/trend` | GET | time-series for area × category × metric |
 | `/realestate/geo` | GET | borough GeoJSON + selected metric per area |
 | `/realestate/brief` | GET | latest (or by-date) daily brief + token/cost |
-| `/scrape-realestate` | POST | manual spot-check of one `?locality=&deal=` |
+
+Ingestion is **not** a public route: the scraper runs as a separate containerized
+Function App on Azure Container Apps (`APP_ROLE=scraper`), driven by a 20-min timer.
+It exposes only `/health` and `POST /admin/scrape-tick` (manual one-unit sweep).
 
 ## One-time setup
 

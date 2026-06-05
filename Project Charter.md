@@ -124,7 +124,6 @@ frontend/  src/api.js        # single backend seam; tabs: Map (hero) / Trends / 
 | `/realestate/trend` | GET | time-series for area × category × metric | 🔧 |
 | `/realestate/geo` | GET | borough boundary GeoJSON + the selected metric per area | 🔧 |
 | `/realestate/brief` | GET | latest (or by-date) daily brief memo + token/cost | 🔧 |
-| `/scrape-realestate` | POST | manual spot-check sweep of one `?locality=&deal=` | 🔧 |
 
 All read endpoints just serve precomputed Parquet/JSON from Blob → bounded JSON.
 Q&A (`/realestate/ask`) is **deferred** to a later phase.
@@ -205,7 +204,10 @@ short, fitting Flex Consumption — no `functionTimeout` bump needed):
    global dedup + flags) → rebuild gold (segment_weekly + yield, city & okres) → run the
    agent brief → write `agent_log` + `briefs/<date>.json`.
 
-Plus `/scrape-realestate` for manual 1-unit spot-checks.
+`scrape_next_area` runs in a separate containerized Function App on Azure Container Apps
+(`APP_ROLE=scraper`), because the headless-browser scrape needs Chromium — impossible on
+Flex Consumption. Manual 1-unit spot-checks: `POST /admin/scrape-tick` on that app.
+`build_and_brief` and the read API stay on the Flex app (`APP_ROLE=api`).
 
 **Politeness is load-bearing** (ethical + block-avoidance): spreading one unit per 20 min
 across the day is *more* polite than a burst. Getting blocked kills the demo.

@@ -1,0 +1,105 @@
+name: Deploy (Scraper container)
+
+# Builds the containerized scraper Function App image (APP_ROLE=scraper, with
+# Chromium baked in) and points the Azure Container Apps-hosted Function App at it.
+# Runs on the same backend/** changes as the Flex deploy: both apps share the
+# backend/ tree, so a code change ships to both — the read API via zip-deploy
+# (deploy.yml) and the scraper via this image build.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-scraper.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  IMAGE_REPO: scraper
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Discover ACR + scraper app
+        id: discover
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            acr=$(az acr list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query "[0].name" -o tsv)
+            loginServer=$(az acr show --name "$acr" \
+              --query "loginServer" -o tsv)
+            # The Container Apps-hosted Function App is the one whose kind carries
+            # 'azurecontainerapps' (the Flex read API does not).
+            app=$(az functionapp list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query "[?contains(kind, 'azurecontainerapps')].name | [0]" -o tsv)
+            host=$(az functionapp list \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query "[?contains(kind, 'azurecontainerapps')].defaultHostName | [0]" -o tsv)
+            if [ -z "$acr" ] || [ -z "$app" ]; then
+              echo "::error::ACR or scraper Function App not found in $AZURE_RESOURCE_GROUP. Run the Infra workflow first."
+              exit 1
+            fi
+            echo "acr=$acr" >> "$GITHUB_OUTPUT"
+            echo "loginServer=$loginServer" >> "$GITHUB_OUTPUT"
+            echo "app=$app" >> "$GITHUB_OUTPUT"
+            echo "host=$host" >> "$GITHUB_OUTPUT"
+
+      - name: Build image in ACR
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            # Server-side build (ACR Tasks) — no Docker daemon needed on the runner.
+            # Build context is backend/, which holds the Dockerfile.
+            az acr build \
+              --registry "${{ steps.discover.outputs.acr }}" \
+              --image "$IMAGE_REPO:${{ github.sha }}" \
+              --image "$IMAGE_REPO:latest" \
+              backend
+
+      - name: Point Function App at the new image
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            # The app pulls via its managed identity (acrUseManagedIdentityCreds in
+            # Bicep), so no registry username/password is passed here.
+            az functionapp config container set \
+              --name "${{ steps.discover.outputs.app }}" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --image "${{ steps.discover.outputs.loginServer }}/$IMAGE_REPO:${{ github.sha }}"
+            az functionapp restart \
+              --name "${{ steps.discover.outputs.app }}" \
+              --resource-group "$AZURE_RESOURCE_GROUP"
+
+      - name: Smoke test /api/health
+        run: |
+          host="${{ steps.discover.outputs.host }}"
+          url="https://$host/api/health"
+          echo "Probing $url"
+          for attempt in $(seq 1 20); do
+            code=$(curl -s -o /tmp/body -w "%{http_code}" "$url" || true)
+            if [ "$code" = "200" ]; then
+              echo "Health OK: $(cat /tmp/body)"
+              exit 0
+            fi
+            echo "Attempt $attempt: HTTP $code — retrying in 15s (cold container pull can be slow)"
+            sleep 15
+          done
+          echo "::error::Scraper health check did not return 200 in time"
+          cat /tmp/body || true
+          exit 1

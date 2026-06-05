@@ -42,6 +42,23 @@ jobs:
           CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
         with:
           inlineScript: |
+            # Preserve the CI-deployed scraper image across infra redeploys: the
+            # Bicep default is only a bootstrap placeholder, so read the running
+            # app's current image (if it exists) and pass it back. First-ever deploy
+            # has no app yet and falls through to the placeholder.
+            PLACEHOLDER="mcr.microsoft.com/azure-functions/python:4-python3.13"
+            scraperApp=$(az functionapp list -g "$AZURE_RESOURCE_GROUP" \
+              --query "[?contains(kind, 'azurecontainerapps')].name | [0]" -o tsv 2>/dev/null || true)
+            scraperImage="$PLACEHOLDER"
+            if [ -n "$scraperApp" ]; then
+              current=$(az functionapp config container show \
+                --name "$scraperApp" --resource-group "$AZURE_RESOURCE_GROUP" \
+                --query "[?name=='DOCKER_CUSTOM_IMAGE_NAME'].value | [0]" -o tsv 2>/dev/null || true)
+              current="${current#DOCKER|}"   # strip any leading DOCKER| prefix
+              if [ -n "$current" ]; then scraperImage="$current"; fi
+            fi
+            echo "Using scraper image: $scraperImage"
+
             # baseName: use the AZURE_BASE_NAME variable if set, else fall back to
             # the parameters.json default ('myapp'). claudeApiKey is optional — the
             # bare shell deploys without it; set the secret once you add an agent.
@@ -52,11 +69,15 @@ jobs:
               --parameters infra/main.parameters.json \
               --parameters baseName="${AZURE_BASE_NAME:-myapp}" \
               --parameters claudeApiKey="$CLAUDE_API_KEY" \
+              --parameters scraperImage="$scraperImage" \
               --query properties.outputs -o json)
 
             funcName=$(echo "$outputs" | jq -r '.functionAppName.value')
             host=$(echo "$outputs" | jq -r '.functionAppDefaultHostname.value')
             swaHost=$(echo "$outputs" | jq -r '.staticWebAppHostname.value')
+            scraperName=$(echo "$outputs" | jq -r '.scraperFunctionAppName.value')
+            scraperHost=$(echo "$outputs" | jq -r '.scraperFunctionAppHostname.value')
+            acrName=$(echo "$outputs" | jq -r '.containerRegistryName.value')
 
             {
               echo "## Infra deployed"
@@ -64,7 +85,14 @@ jobs:
               echo "| Output | Value |"
               echo "| --- | --- |"
               echo "| Resource group | \`$AZURE_RESOURCE_GROUP\` |"
-              echo "| Function App | \`$funcName\` |"
+              echo "| Function App (API) | \`$funcName\` |"
               echo "| Hostname | https://$host |"
               echo "| Frontend | https://$swaHost |"
+              echo "| Scraper app (container) | \`$scraperName\` |"
+              echo "| Scraper hostname | https://$scraperHost |"
+              echo "| Container registry | \`$acrName\` |"
             } >> "$GITHUB_STEP_SUMMARY"
+
+            if [ "$scraperImage" = "$PLACEHOLDER" ]; then
+              echo "::notice::Scraper is on the bootstrap placeholder image. Run the 'Deploy (Scraper container)' workflow to build and ship the real scraper image."
+            fi
