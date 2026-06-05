@@ -256,14 +256,17 @@ resource staticSite 'Microsoft.Web/staticSites@2024-04-01' = {
 }
 
 // ---- Container registry -----------------------------------------------------
-// Holds the scraper image. adminUser is ON so the scraper app can pull with the
-// registry username/password (below) — this avoids needing a role assignment,
-// which a Contributor service principal isn't allowed to create. To switch to
-// managed-identity pull instead, grant the deploy SP "User Access Administrator"
-// and re-add an AcrPull roleAssignment + acrUseManagedIdentityCreds.
+// Holds the scraper image. Colocated with the Container Apps region so image
+// pulls are in-region (no cross-region pull cost/latency); the registry is new
+// and holds no data, so following containerAppsLocation is free.
+// adminUser is ON so the scraper app can pull with the registry username/password
+// (below) — this avoids needing a role assignment, which a Contributor service
+// principal isn't allowed to create. To switch to managed-identity pull instead,
+// grant the deploy SP "User Access Administrator" and re-add an AcrPull
+// roleAssignment + acrUseManagedIdentityCreds.
 resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
   name: acrName
-  location: location
+  location: containerAppsLocation
   sku: {
     name: 'Basic'
   }
@@ -290,10 +293,10 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
 
 // ---- Scraper Function App (Functions on Azure Container Apps) ----------------
 // Same backend/ code as the Flex app, but APP_ROLE=scraper registers only the
-// 20-min ingestion timer, and the image carries Chromium. Pulls the image with
-// its system-assigned identity (acrUseManagedIdentityCreds), so no registry
-// password is stored. linuxFxVersion takes the image WITHOUT a tag-less default;
-// the bootstrap value is the public base image until CI pushes the real one.
+// 20-min ingestion timer, and the image carries Chromium. Pulls the image using
+// the ACR admin credentials set as DOCKER_REGISTRY_SERVER_* app settings below.
+// linuxFxVersion holds the image: the bootstrap value is the public base image
+// until CI (deploy-scraper.yml) pushes the real one and repoints the app.
 resource scraperFunctionApp 'Microsoft.Web/sites@2024-04-01' = {
   name: scraperFunctionAppName
   location: containerAppsLocation
