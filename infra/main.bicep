@@ -50,6 +50,9 @@ param scrapePageSize string = '30'
 @description('Container image for the scraper Function App (registry/repo:tag, no DOCKER| prefix). Default is a bootstrap placeholder; CI overrides it.')
 param scraperImage string = 'mcr.microsoft.com/azure-functions/python:4-python3.13'
 
+@description('Region for the Container Apps environment + scraper Function App. Defaults to the main location; override (e.g. northeurope) to dodge transient ACA capacity errors when the main region is full.')
+param containerAppsLocation string = location
+
 // ---- Derived names ----------------------------------------------------------
 var uniqueSuffix = uniqueString(resourceGroup().id)
 var storageAccountName = take(toLower('st${baseName}${environmentName}${uniqueSuffix}'), 24)
@@ -273,7 +276,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
 // Hosts the scraper Function App. Logs flow to the existing Log Analytics.
 resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: containerEnvName
-  location: location
+  location: containerAppsLocation
   properties: {
     appLogsConfiguration: {
       destination: 'log-analytics'
@@ -293,7 +296,7 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
 // the bootstrap value is the public base image until CI pushes the real one.
 resource scraperFunctionApp 'Microsoft.Web/sites@2024-04-01' = {
   name: scraperFunctionAppName
-  location: location
+  location: containerAppsLocation
   kind: 'functionapp,linux,container,azurecontainerapps'
   properties: {
     managedEnvironmentId: containerEnv.id

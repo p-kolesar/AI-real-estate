@@ -15,6 +15,9 @@ env:
   AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
   AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
   AZURE_BASE_NAME: ${{ vars.AZURE_BASE_NAME }}
+  # Optional: pin the Container Apps env + scraper app to a different region than
+  # AZURE_LOCATION (e.g. set to 'northeurope' if westeurope ACA capacity is full).
+  AZURE_CONTAINER_APPS_LOCATION: ${{ vars.AZURE_CONTAINER_APPS_LOCATION }}
 
 jobs:
   provision:
@@ -70,6 +73,7 @@ jobs:
               --parameters baseName="${AZURE_BASE_NAME:-myapp}" \
               --parameters claudeApiKey="$CLAUDE_API_KEY" \
               --parameters scraperImage="$scraperImage" \
+              --parameters containerAppsLocation="${AZURE_CONTAINER_APPS_LOCATION:-$AZURE_LOCATION}" \
               --query properties.outputs -o json)
 
             funcName=$(echo "$outputs" | jq -r '.functionAppName.value')
