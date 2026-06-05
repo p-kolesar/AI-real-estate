@@ -193,3 +193,17 @@ def build_and_brief(timer: func.TimerRequest) -> None:
         logging.info("build_and_brief brief: status=%s", brief.get("status"))
     except Exception:
         logging.exception("build_and_brief failed")
+
+
+# ---------------------------------------------------------------------------
+# Startup diagnostic — runs at import (indexing) time, so it shows up in the
+# host/Application Insights logs. A 404 means a route never registered, which
+# in-handler logging can't capture; this makes the actually-indexed set visible.
+# ---------------------------------------------------------------------------
+try:
+    _registered = sorted(f.get_function_name() for f in app.get_functions())
+    logging.info("function_app startup: APP_ROLE=%s, indexed %d functions: %s",
+                 APP_ROLE, len(_registered), _registered)
+except Exception:
+    logging.exception("function_app startup: could not enumerate registered functions")
+
