@@ -78,20 +78,23 @@ jobs:
           inlineScript: |
             # Registry credentials are already set as app settings by Bicep
             # (DOCKER_REGISTRY_SERVER_*), so only the image reference changes here.
+            # No explicit restart: this app is hosted on Azure Container Apps, where
+            # setting a new (uniquely-tagged) image automatically rolls a new
+            # revision. The classic 'az functionapp restart' isn't valid here (it
+            # returns Bad Request on ACA-hosted function apps).
             az functionapp config container set \
               --name "${{ steps.discover.outputs.app }}" \
               --resource-group "$AZURE_RESOURCE_GROUP" \
               --image "${{ steps.discover.outputs.loginServer }}/$IMAGE_REPO:${{ github.sha }}"
-            az functionapp restart \
-              --name "${{ steps.discover.outputs.app }}" \
-              --resource-group "$AZURE_RESOURCE_GROUP"
 
       - name: Smoke test /api/health
         run: |
           host="${{ steps.discover.outputs.host }}"
           url="https://$host/api/health"
           echo "Probing $url"
-          for attempt in $(seq 1 20); do
+          # First revision rollout has to pull a ~1.5 GB image cross-region
+          # (ACR westeurope -> app germanywestcentral), so allow ~10 min.
+          for attempt in $(seq 1 40); do
             code=$(curl -s -o /tmp/body -w "%{http_code}" "$url" || true)
             if [ "$code" = "200" ]; then
               echo "Health OK: $(cat /tmp/body)"
