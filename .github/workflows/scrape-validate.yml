@@ -1,0 +1,59 @@
+name: Scrape validation (browser)
+
+# Proves the Playwright DOM scraper works from cloud infra (a GitHub-hosted Ubuntu
+# runner = a datacenter IP), not just a local machine. Runs the eval for both deals
+# on a small locality, gates the job on PASS, and uploads the scraped rows as a CSV
+# artifact to download and inspect. This is validation only — steady-state ingestion
+# will later move to Functions on Azure Container Apps.
+
+on:
+  workflow_dispatch:
+    inputs:
+      locality:
+        description: "Locality slug"
+        default: "bratislava-ruzinov"
+      max_pages:
+        description: "Pages per deal"
+        default: "1"
+  schedule:
+    - cron: "0 7,15 * * *"   # twice daily (UTC) — confirms scheduled runs work
+
+permissions:
+  contents: read
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install scraper deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-scraper.txt
+
+      - name: Install Chromium (+ system libs)
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run scrape eval (predaj + prenajom)
+        run: |
+          python eval_scrape.py \
+            --locality "${{ inputs.locality || 'bratislava-ruzinov' }}" \
+            --max-pages "${{ inputs.max_pages || '1' }}" \
+            --csv scrape_sample.csv
+
+      - name: Upload scraped sample (even on failure, for diagnostics)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrape-sample
+          path: backend/scrape_sample.csv
+          if-no-files-found: warn

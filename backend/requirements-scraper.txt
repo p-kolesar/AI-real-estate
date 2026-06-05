@@ -1,0 +1,8 @@
+# Lean runtime for the browser scraper (realestate/browser_scraper.py) — used by the
+# GitHub Actions validation workflow and, later, the Container Apps image. Kept separate
+# from the Function App's requirements.txt so CI installs only what the scraper needs.
+polars
+playwright
+requests            # imported by realestate/scraper.py (the delegating module)
+azure-storage-blob  # imported by realestate/scraper.py at module load
+tzdata              # IANA tz DB for Polars on hosts without system zoneinfo

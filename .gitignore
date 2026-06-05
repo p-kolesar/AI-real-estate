@@ -13,6 +13,9 @@ obj/
 # Build artifacts
 *.zip
 
+# Scraper eval CSV dump (local runs / CI artifact)
+scrape_sample.csv
+
 # Bicep
 *.bicepparam.json
 
