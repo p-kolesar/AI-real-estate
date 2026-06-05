@@ -68,7 +68,7 @@ if APP_ROLE == "scraper":
     # Containerized ingestion (headless browser) — Azure Container Apps
     # =======================================================================
 
-    @app.route(route="admin/scrape-tick", methods=["POST"])
+    @app.route(route="admin/scrape-tick", methods=["GET"])
     def admin_scrape_tick(req: func.HttpRequest) -> func.HttpResponse:
         """Fire one ledger-driven ingestion tick on demand (same as the timer)."""
         from realestate import ledger
