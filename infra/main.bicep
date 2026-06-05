@@ -322,10 +322,12 @@ resource scraperFunctionApp 'Microsoft.Web/sites@2024-04-01' = {
           value: 'false'
         }
         // ACR pull via admin credentials (the public bootstrap image needs none;
-        // these kick in once CI points the app at the ACR-hosted image).
+        // these kick in once CI points the app at the ACR-hosted image). The ACA
+        // platform wants a BARE hostname here (no https:// scheme), unlike classic
+        // App Service containers.
         {
           name: 'DOCKER_REGISTRY_SERVER_URL'
-          value: 'https://${acr.properties.loginServer}'
+          value: acr.properties.loginServer
         }
         {
           name: 'DOCKER_REGISTRY_SERVER_USERNAME'
